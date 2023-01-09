@@ -25,11 +25,12 @@ from .utils import to_inttuple
 
 
 class AnsatzBase:
-    def __init__(self, hamiltonian, n_params):
+    def __init__(self, hamiltonian, n_params, use_gpu=False):
         self.hamiltonian = hamiltonian
         self.n_params = n_params
         self.n_qubits = self.hamiltonian.max_n() + 1
         self.sparse = None
+        self.use_gpu = use_gpu
 
     def make_sparse(self, fmt='csc', make_method=None):
         """Make sparse matrix. This method may be changed in the future release."""
@@ -62,7 +63,11 @@ class AnsatzBase:
 
     def get_energy_sparse(self, circuit):
         """Get energy using sparse matrix. This method may be changed in the future release."""
-        return sparse_expectation(self.sparse, circuit.run())
+        if self.use_gpu:
+            vec = circuit.run(backend="cusv").get()
+        else:
+            vec = circuit.run(backend="numpy", returns="statevector")  # emulate blueqat 1.0.4
+        return sparse_expectation(self.sparse, vec)
 
     def get_objective(self, sampler=None):
         """Get an objective function to be optimized."""
@@ -85,7 +90,7 @@ class AnsatzBase:
 
 class QaoaAnsatz(AnsatzBase):
     """Ansatz for QAOA."""
-    def __init__(self, hamiltonian, step=1, init_circuit=None, mixer=None):
+    def __init__(self, hamiltonian, step=1, init_circuit=None, mixer=None, use_gpu=False):
         """
         Args:
             hamiltonian (Pauli expr): Hamiltonian for optimization.
@@ -98,7 +103,7 @@ class QaoaAnsatz(AnsatzBase):
                 By default, mixer is None and normal Quantum Approximate Optimization Algorithm is used.
                 This feature is experimental. It may be modified.
         """
-        super().__init__(hamiltonian, step * 2)
+        super().__init__(hamiltonian, step * 2, use_gpu)
         self.hamiltonian = hamiltonian.to_expr().simplify()
         if not self.check_hamiltonian():
             raise ValueError("Hamiltonian terms are not commutable")
@@ -145,11 +150,12 @@ class QaoaAnsatz(AnsatzBase):
 
 
 class VqeResult:
-    def __init__(self, vqe=None, params=None, circuit=None):
+    def __init__(self, vqe=None, params=None, circuit=None, use_gpu=False):
         self.vqe = vqe
         self.params = params
         self.circuit = circuit
         self._probs = None
+        self.use_gpu = use_gpu
 
     def most_common(self, n=1):
         return tuple(
@@ -173,7 +179,11 @@ class VqeResult:
             sampler = self.vqe.sampler
 
         if sampler is None:
-            probs = expect(self.circuit.run(returns="statevector"),
+            if self.use_gpu:
+                qubits = self.circuit.run(backend="cusv").get()
+            else:
+                qubits = self.circuit.run(backend="numpy", returns="statevector")  # emulate blueqat 1.0.4
+            probs = expect(qubits,
                            range(self.circuit.n_qubits))
         else:
             probs = sampler(self.circuit, range(self.circuit.n_qubits))
@@ -183,7 +193,7 @@ class VqeResult:
 
 
 class Vqe:
-    def __init__(self, ansatz, minimizer=None, sampler=None):
+    def __init__(self, ansatz, minimizer=None, sampler=None, use_gpu=False):
         self.ansatz = ansatz
         self.minimizer = minimizer or get_scipy_minimizer(method="Powell",
                                                           options={
@@ -192,6 +202,7 @@ class Vqe:
                                                               "maxiter": 1000
                                                           })
         self.sampler = sampler
+        self.ansatz.use_gpu = self.use_gpu = use_gpu
 
     def run(self, verbose=False):
         objective = self.ansatz.get_objective(self.sampler)
@@ -208,7 +219,7 @@ class Vqe:
             objective = verbose_objective(objective)
         params = self.minimizer(objective, self.ansatz.n_params)
         c = self.ansatz.get_circuit(params)
-        return VqeResult(self, params, c)
+        return VqeResult(self, params, c, self.use_gpu)
 
     @property
     def result(self):
@@ -256,7 +267,7 @@ def non_sampling_sampler(circuit, meas):
     """Calculate the expectations without sampling."""
     meas = tuple(meas)
     n_qubits = circuit.n_qubits
-    return expect(circuit.run(returns="statevector"), meas)
+    return expect(circuit.run(backend="numpy", returns="statevector"), meas)  # emulate blueqat 1.0.4
 
 
 def get_measurement_sampler(n_sample, run_options=None):
@@ -284,7 +295,7 @@ def get_state_vector_sampler(n_sample):
     """Returns a function which get the expectations by sampling the state vector"""
     def sampling_by_measurement(circuit, meas):
         val = 0.0
-        e = expect(circuit.run(returns="statevector"), meas)
+        e = expect(circuit.run(backend="numpy", returns="statevector"), meas)  # emulate blueqat 1.0.4
         bits, probs = zip(*e.items())
         dists = np.random.multinomial(n_sample, probs) / n_sample
         return dict(zip(tuple(bits), dists))
