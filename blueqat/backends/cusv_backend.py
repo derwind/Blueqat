@@ -127,6 +127,11 @@ class cuSV(Backend):
                     [1, 0],
                     [0, np.exp(gate.theta*1j)]
                 ], dtype=np.complex64)
+            elif gate.lowername == 'u':
+                matrix = cp.array([
+                    [np.cos(gate.theta/2), -np.exp(gate.lam*1j)*np.sin(gate.theta/2)],
+                    [np.exp(gate.phi*1j)*np.sin(gate.theta/2), np.exp((gate.phi+gate.lam)*1j)*np.cos(gate.theta/2)]
+                ], dtype=np.complex64)
             else:
                 matrix = cp.asarray([1.0+0.0j, 0.0+0.0j, 0.0+0.0j, 1.0+0.0j], dtype=np.complex64)
 
@@ -174,6 +179,7 @@ class cuSV(Backend):
     gate_ry = _one_qubit_gate_args_theta
     gate_rz = _one_qubit_gate_args_theta
     gate_p = gate_phase = _one_qubit_gate_args_theta
+    gate_u = _one_qubit_gate_args_theta
 
     def _two_qubit_gate_noargs(self, gate, ctx):
         for control, target in gate.control_target_iter(ctx[1]):
